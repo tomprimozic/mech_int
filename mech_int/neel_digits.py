@@ -1,3 +1,7 @@
+import copy
+import datetime
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -5,7 +9,6 @@ import numpy as np
 from tqdm.auto import tqdm
 
 import plotly.express as px
-import plotly.io as pio
 import plotly.graph_objects as go
 
 from .neel_transformer import Transformer
@@ -14,8 +17,8 @@ from .neel_transformer import Transformer
 num_layers = 1
 d_vocab = 12
 d_vocab_out = 10
-num_digits = 5
-n_ctx = 3*num_digits + 3
+NUM_DIGITS = 5
+n_ctx = 3*NUM_DIGITS + 3
 act_type = 'ReLU'
 batch_size = 64
 num_data = 750
@@ -29,6 +32,7 @@ EQUALS_INDEX = 11
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
+ROOT_DIR = Path(__file__).parent.parent / 'data'
 
 
 # This is mostly a bunch of over-engineered mess to hack Plotly into producing
@@ -43,6 +47,17 @@ def to_numpy(tensor, flat=False):
         return tensor.detach().cpu().numpy()
 
 
+def show(fig):
+    try:
+        from IPython import get_ipython
+        if get_ipython() is None or "IPKernelApp" not in get_ipython().config:  # pragma: no cover
+            raise ImportError("console")
+        from IPython.display import display
+        import plotly.graph_objects as go
+        display(go.FigureWidget(fig))
+    except ImportError:
+        fig.show()
+
 def line(x, y=None, hover=None, xaxis='', yaxis='', **kwargs):
     if type(y)==torch.Tensor:
         y = to_numpy(y, flat=True)
@@ -50,8 +65,7 @@ def line(x, y=None, hover=None, xaxis='', yaxis='', **kwargs):
         x=to_numpy(x, flat=True)
     fig = px.line(x, y=y, hover_name=hover, **kwargs)
     fig.update_layout(xaxis_title=xaxis, yaxis_title=yaxis)
-    fig.show()
-
+    show(fig)
 
 def lines(lines_list, x=None, mode='lines', labels=None, xaxis='', yaxis='', title = '', log_y=False, hover=None, **kwargs):
     # Helper function to plot multiple lines
@@ -72,10 +86,10 @@ def lines(lines_list, x=None, mode='lines', labels=None, xaxis='', yaxis='', tit
         fig.add_trace(go.Scatter(x=x, y=line, mode=mode, name=label, hovertext=hover, **kwargs))
     if log_y:
         fig.update_layout(yaxis_type="log")
-    fig.show()
+    show(fig)
 
 
-def data_generator(batch_size, num_digits):
+def data_generator(batch_size, num_digits=NUM_DIGITS):
     while True:
         batch = torch.zeros((batch_size, 3*num_digits+3)).to(torch.int64)
         x = torch.randint(0, 10, (batch_size, num_digits))
@@ -97,8 +111,11 @@ def data_generator(batch_size, num_digits):
 
 
 
-def create_model(*, d_model: int, d_mlp: int, d_head: int, num_heads: int):
+def create_model(*, d_model: int, d_mlp: int, d_head: int | None = None, num_heads:int=4):
+    if d_head is None:
+        d_head = d_model//num_heads
     assert d_model == d_head * num_heads
+    print(f'creating new model {d_model=} {d_mlp=} {d_head=} {num_layers=} {num_heads=}')
     model = Transformer(num_layers=num_layers,
                         d_vocab=d_vocab,
                         d_model=d_model,
@@ -113,29 +130,34 @@ def create_model(*, d_model: int, d_mlp: int, d_head: int, num_heads: int):
 
 
 def get_pred_log_probs(logits, tokens):
-    trunc_logits = logits[:, -(num_digits+2):-1]
-    ans_tokens = tokens[:, -(num_digits+1):]
+    trunc_logits = logits[:, -(NUM_DIGITS+2):-1]
+    ans_tokens = tokens[:, -(NUM_DIGITS+1):]
     log_probs = F.log_softmax(trunc_logits.to(torch.float64), dim=-1)
     pred_log_probs = torch.gather(log_probs, -1, ans_tokens[:, :, None])[..., 0]
     return pred_log_probs
 
 
 def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:int|None=None, num_heads:int=4, is_finite:bool=False, seed:int=129000, checkpoint_models:bool=True, checkpoint_every:int=50):
-    global model, optimizer, scheduler, train_losses, per_token_losses, tokens, logits, train_logits, train_tokens, epoch, per_token_losses_train, train_losses, test_tokens, test_logits, per_token_losses_test, test_losses
+    global model, optimizer, scheduler, test_ds, train_ds, ds, train_losses, train_carries, per_token_losses, tokens, logits, train_logits, train_tokens, epoch, per_token_losses_train, train_losses, test_tokens, test_logits, per_token_losses_test, test_losses, ptl_train_list, ptl_test_list, epochs, state_dicts
 
     if d_mlp is None:
         d_mlp = 4 * d_model
-    if d_head is None:
-        d_head = d_model//num_heads
 
     torch.manual_seed(seed)
 
+    run_name = datetime.datetime.utcnow().strftime('digits_%Y-%m-%d_%H-%M-%S')
+    data_dir = ROOT_DIR / ('finite' if is_finite else 'infinite') / run_name
+    data_dir.mkdir(exist_ok=True, parents=True)
+
     if is_finite:
-        test_ds = data_generator(batch_size, num_digits)
-        train_ds = data_generator(num_data, num_digits)
+        test_ds = data_generator(batch_size)
+        train_ds = data_generator(num_data)
         train_tokens, train_carries = next(train_ds)
     else:
-        ds = data_generator(batch_size, num_digits)
+        ds = data_generator(batch_size)
+
+    state_dicts = []
+    epochs = [0]
 
     model = create_model(d_model=d_model, d_mlp=d_mlp, d_head=d_head, num_heads=num_heads)
 
@@ -150,6 +172,8 @@ def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:
         ptl_train_list = []
         test_losses = []
         ptl_test_list = []
+        state_dicts.append(copy.deepcopy(model.state_dict()))
+
         for epoch in tqdm(range(num_epochs)):
             train_logits = model(train_tokens)
             per_token_losses_train = -get_pred_log_probs(train_logits, train_tokens).mean(0)
@@ -158,34 +182,49 @@ def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:
             train_loss.backward()
             train_losses.append(train_loss.item())
 
-            test_tokens, _ = next(test_ds)
-            test_logits = model(test_tokens)
-            per_token_losses_test = -get_pred_log_probs(test_logits, test_tokens).mean(0)
-            ptl_test_list.append(to_numpy(per_token_losses_test))
-            test_loss = per_token_losses_test.mean()
-            test_losses.append(test_loss.item())
-
             optimizer.step()
             scheduler.step()
+
+            with torch.inference_mode():
+              test_tokens, _ = next(test_ds)
+              test_logits = model(test_tokens)
+              per_token_losses_test = -get_pred_log_probs(test_logits, test_tokens).mean(0)
+              ptl_test_list.append(to_numpy(per_token_losses_test))
+              test_loss = per_token_losses_test.mean()
+              test_losses.append(test_loss.item())
+
             optimizer.zero_grad()
             if epoch % 100 == 0:
                 print(epoch, train_loss.item(), test_loss.item())
             if epoch%1000 ==0 and epoch>0:
                 lines([train_losses, test_losses], labels=['train', 'test'])
-                lines([[ptl_train_list[j][i] for j in range(len(ptl_train_list))] for i in range(1+num_digits)]+[train_losses]+[[ptl_test_list[j][i] for j in range(len(ptl_train_list))] for i in range(1+num_digits)]+[test_losses],
-                labels = [f'tok train {i}' for i in range(1+num_digits)]+['train_loss']+[f'tok test {i}' for i in range(1+num_digits)]+['test_loss'],
+                lines([[ptl_train_list[j][i] for j in range(len(ptl_train_list))] for i in range(1+NUM_DIGITS)]+[train_losses]+[[ptl_test_list[j][i] for j in range(len(ptl_train_list))] for i in range(1+NUM_DIGITS)]+[test_losses],
+                labels = [f'tok train {i}' for i in range(1+NUM_DIGITS)]+['train_loss']+[f'tok test {i}' for i in range(1+NUM_DIGITS)]+['test_loss'],
                 title='Per-digit Loss Curves for 5 digit addition (Finite Data)',
                 xaxis='Step',
                 yaxis='Loss')
+            if checkpoint_models:
+                if (epoch+1) % (checkpoint_every) == 0:
+                    state_dicts.append(copy.deepcopy(model.state_dict()))
+                    epochs.append(epoch+1)
+                    save_dict = {
+                        'model': model.state_dict(),
+                        'train_loss': train_losses,
+                        'test_loss': test_losses,
+                        'epoch': epoch,
+                        'train_tokens': train_tokens,
+                        'test_tokens': test_tokens,
+                    }
+                    torch.save(save_dict, data_dir / f"{epoch}.pth")
+
+
 
 
     if not is_finite:
         train_losses = []
         per_token_losses_list = []
-        sds=[]
-        epochs = [0]
-        sds.append(model.state_dict())
-        for epoch in tqdm.tqdm(range(num_epochs)):
+        state_dicts.append(copy.deepcopy(model.state_dict()))
+        for epoch in tqdm(range(num_epochs)):
             tokens, carry = next(ds)
             logits = model(tokens)
             per_token_losses = -get_pred_log_probs(logits, tokens).mean(0)
@@ -200,24 +239,30 @@ def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:
                 print(epoch, loss.item())
             if checkpoint_models:
                 if (epoch+1) % (checkpoint_every) == 0:
-                    sds.append(model.state_dict())
+                    state_dicts.append(copy.deepcopy(model.state_dict()))
                     epochs.append(epoch+1)
+                    save_dict = {
+                        'model': model.state_dict(),
+                        'train_loss': train_losses,
+                      #   'test_loss': test_losses,
+                        'epoch': epoch,
+                        'tokens': tokens,
+                      #   'test_tokens': test_tokens,
+                        'per_token_losses_list': per_token_losses_list,
+                    }
+                    torch.save(save_dict, data_dir / f"{epoch}.pth")
 
-        line(train_losses)
+        line(train_losses, title='train loss')
         per_token_losses = np.stack(per_token_losses_list, axis=0)
-        lines([per_token_losses[:, i] for i in range(1+num_digits)]+[train_losses],
-              labels = [f'tok {i}' for i in range(1+num_digits)]+['train_loss'],
+        lines([per_token_losses[:, i] for i in range(1+NUM_DIGITS)]+[train_losses],
+              labels = [f'tok {i}' for i in range(1+NUM_DIGITS)]+['train_loss'],
               title='Per-digit Loss Curves for 5 digit addition (Infinite Data)',
               xaxis='Step',
               yaxis='Loss')
 
-        lines([per_token_losses[:, i] for i in range(1+num_digits)]+[train_losses],
-              labels = [f'tok {i}' for i in range(1+num_digits)]+['train_loss'], log_y=True)
-
-        line(train_losses)
-        per_token_losses = np.stack(per_token_losses_list, axis=0)
-        lines([per_token_losses[:, i] for i in range(1+num_digits)]+[train_losses],
-              labels = [f'tok {i}' for i in range(1+num_digits)]+['train_loss'])
-
-        lines([per_token_losses[:, i] for i in range(1+num_digits)]+[train_losses],
-              labels = [f'tok {i}' for i in range(1+num_digits)]+['train_loss'], log_y=True)
+        lines([per_token_losses[:, i] for i in range(1+NUM_DIGITS)]+[train_losses],
+              labels = [f'tok {i}' for i in range(1+NUM_DIGITS)]+['train_loss'],
+              title='Per-digit Loss Curves for 5 digit addition (Infinite Data) - Log Y Axis',
+              xaxis='Step',
+              yaxis='log Loss',
+              log_y=True)
