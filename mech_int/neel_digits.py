@@ -243,12 +243,12 @@ def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:
       optimizer.zero_grad()
       train_losses.append(loss.item())
       answer = np.argmax(log_probs.detach().cpu().numpy(), axis=-1)
-      correct = (answer == tokens[:, -(NUM_DIGITS+1):].numpy())
+      correct = (answer == tokens[:, -(NUM_DIGITS+1):].detach().cpu().numpy())
       per_token_accuracy = correct.mean(axis=0)
       accuracy = correct.mean()
       accuracy_list.append(accuracy); per_token_accuracy_list.append(per_token_accuracy)
       if epoch % 100 == 0:
-        print(epoch, f'loss={loss.item()} {accuracy=} {per_token_accuracy=} {correct.shape=} {per_token_accuracy.shape=}')
+        print(epoch, f'loss={loss.item()} {accuracy=}')
       if checkpoint_models:
         if (epoch+1) % (checkpoint_every) == 0:
           state_dicts.append(copy.deepcopy(model.state_dict()))
