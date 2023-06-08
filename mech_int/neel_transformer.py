@@ -125,6 +125,12 @@ class Attention(nn.Module):
     self.hook_result = HookPoint()
 
   def forward(self, x):
+    # i = index = attention head index
+    # b = batch
+    # d = model = d_model
+    # h = d_head = d_model / num_heads
+    # p = position = token index
+    # q = p
     k = self.hook_k(torch.einsum('ihd,bpd->biph', self.W_K, x))
     q = self.hook_q(torch.einsum('ihd,bpd->biph', self.W_Q, x))
     v = self.hook_v(torch.einsum('ihd,bpd->biph', self.W_V, x))
