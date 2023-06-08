@@ -1,36 +1,8 @@
-# Import stuff
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
 import numpy as np
 import einops
-import tqdm.notebook as tqdm
-
-import random
-import time
-
-# from google.colab import drive
-from pathlib import Path
-import pickle
-import os
-
-import matplotlib.pyplot as plt
-# %matplotlib inline
-import plotly.express as px
-import plotly.io as pio
-pio.renderers.default = "colab"
-import plotly.graph_objects as go
-
-from torch.utils.data import DataLoader
-
-from functools import *
-import pandas as pd
-import gc
-
-# import comet_ml
-import itertools
-
 
 
 # A helper class to get access to intermediate activations (inspired by Garcon)
