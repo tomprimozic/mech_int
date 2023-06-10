@@ -128,7 +128,7 @@ def data_generator(batch_size, num_digits=NUM_DIGITS):
 
 
 
-def create_model(*, d_model: int, d_mlp: int, d_head: int | None = None, num_heads:int=4):
+def create_model(*, d_model: int, d_mlp: int, d_head: int | None = None, num_heads:int=4, output_proj=True, mlp_bias=True, resid_attn=True, resid_mlp=True):
   if d_head is None:
     d_head = d_model//num_heads
   assert d_model == d_head * num_heads
@@ -141,7 +141,12 @@ def create_model(*, d_model: int, d_mlp: int, d_head: int | None = None, num_hea
             num_heads=num_heads,
             n_ctx=n_ctx,
             act_type=act_type,
-            d_vocab_out=d_vocab_out)
+            d_vocab_out=d_vocab_out,
+            output_proj=output_proj,
+            mlp_bias=mlp_bias,
+            resid_attn=resid_attn,
+            resid_mlp=resid_mlp,
+        )
   model.to(DEVICE)
   return model
 
@@ -154,7 +159,7 @@ def get_pred_log_probs(logits, tokens):
   return log_probs, pred_log_probs
 
 
-def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:int|None=None, num_heads:int=4, is_finite:bool=False, seed:int=129000, checkpoint_models:bool=True, checkpoint_every:int=50, plot=True):
+def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:int|None=None, num_heads:int=4, is_finite:bool=False, seed:int=129000, checkpoint_models:bool=True, checkpoint_every:int=50, plot=True, output_proj=True, mlp_bias=True, resid_attn=True, resid_mlp=True):
   global model, optimizer, scheduler, test_ds, train_ds, ds, train_losses, train_carries, per_token_losses, tokens, logits, train_logits, train_tokens, epoch, per_token_losses_train, train_losses, test_tokens, test_logits, per_token_losses_test, test_losses, ptl_train_list, ptl_test_list, epochs, state_dicts, per_token_losses_list
 
   if d_mlp is None:
@@ -177,7 +182,8 @@ def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:
   state_dicts = []
   epochs = [0]
 
-  model = create_model(d_model=d_model, d_mlp=d_mlp, d_head=d_head, num_heads=num_heads)
+  model = create_model(d_model=d_model, d_mlp=d_mlp, d_head=d_head, num_heads=num_heads,
+                       output_proj=output_proj, mlp_bias=mlp_bias, resid_attn=resid_attn, resid_mlp=resid_mlp)
 
   optimizer = optim.AdamW(model.parameters(),
               lr=lr,
@@ -281,6 +287,10 @@ def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:
             'per_token_losses_list': per_token_losses_list,
             'accuracy': accuracy_list,
             'per_token_accuracy': per_token_accuracy_list,
+            'output_proj': output_proj,
+            'mlp_bias': mlp_bias,
+            'resid_attn': resid_attn,
+            'resid_mlp': resid_mlp,
           }
           torch.save(save_dict, data_dir / f"{epoch}.pth")
 

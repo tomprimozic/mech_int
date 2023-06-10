@@ -113,7 +113,8 @@ class Attention(nn.Module):
     self.W_K = nn.Parameter(torch.randn(num_heads, d_head, d_model)/np.sqrt(d_model))
     self.W_Q = nn.Parameter(torch.randn(num_heads, d_head, d_model)/np.sqrt(d_model))
     self.W_V = nn.Parameter(torch.randn(num_heads, d_head, d_model)/np.sqrt(d_model))
-    self.W_O = nn.Parameter(torch.randn(num_heads, d_model, d_head)/np.sqrt(d_model))
+    if model[0].output_proj:
+      self.W_O = nn.Parameter(torch.randn(num_heads, d_model, d_head)/np.sqrt(d_model))
     self.register_buffer('mask', torch.tril(torch.ones((n_ctx, n_ctx))))
     self.d_head = d_head
     self.hook_k = HookPoint()
@@ -138,10 +139,13 @@ class Attention(nn.Module):
     attn_scores_masked = torch.tril(attn_scores_pre) - 1e10 * (1 - self.mask[:x.shape[-2], :x.shape[-2]])
     attn_matrix = self.hook_attn(F.softmax(self.hook_attn_pre(attn_scores_masked/np.sqrt(self.d_head)), dim=-1))
     z = self.hook_z(torch.einsum('biph,biqp->biqh', v, attn_matrix))
-    result = self.hook_result(torch.einsum('idh,biqh->biqd', self.W_O, z))
-    out = einops.reduce(result,
-               'batch index position model->batch position model',
-               'sum')
+    if self.model[0].output_proj:
+      result = self.hook_result(torch.einsum('idh,biqh->biqd', self.W_O, z))
+      out = einops.reduce(result,
+                 'batch index position model->batch position model',
+                 'sum')
+    else:
+      out = einops.rearrange(z, 'b i q h -> b q (i h)')
     return out
 
 
@@ -151,9 +155,10 @@ class MLP(nn.Module):
     super().__init__()
     self.model = model
     self.W_in = nn.Parameter(torch.randn(d_mlp, d_model)/np.sqrt(d_model))
-    self.b_in = nn.Parameter(torch.zeros(d_mlp))
     self.W_out = nn.Parameter(torch.randn(d_model, d_mlp)/np.sqrt(d_model))
-    self.b_out = nn.Parameter(torch.zeros(d_model))
+    if model[0].mlp_bias:
+      self.b_in = nn.Parameter(torch.zeros(d_mlp))
+      self.b_out = nn.Parameter(torch.zeros(d_model))
     self.act_type = act_type
     # self.ln = LayerNorm(d_mlp, model=self.model)
     self.hook_pre = HookPoint()
@@ -161,13 +166,13 @@ class MLP(nn.Module):
     assert act_type in ['ReLU', 'GeLU']
 
   def forward(self, x):
-    x = self.hook_pre(torch.einsum('md,bpd->bpm', self.W_in, x) + self.b_in)
+    x = self.hook_pre(torch.einsum('md,bpd->bpm', self.W_in, x) + (self.b_in if self.model[0].mlp_bias else 0))
     if self.act_type=='ReLU':
       x = F.relu(x)
     elif self.act_type=='GeLU':
       x = F.gelu(x)
     x = self.hook_post(x)
-    x = torch.einsum('dm,bpm->bpd', self.W_out, x) + self.b_out
+    x = torch.einsum('dm,bpm->bpd', self.W_out, x) + (self.b_out if self.model[0].mlp_bias else 0)
     return x
 
 
@@ -189,9 +194,11 @@ class TransformerBlock(nn.Module):
       self.hook_resid_mid = HookPoint()
 
   def forward(self, x):
-    x = (x + self.hook_attn_out(self.attn((self.hook_resid_pre(x)))))
+    attn = self.hook_attn_out(self.attn((self.hook_resid_pre(x))))
+    x = (x + attn) if self.model[0].resid_attn else attn
     if not self.attn_only:
-      x = (x + self.hook_mlp_out(self.mlp(self.hook_resid_mid(x))))
+      mlp = self.hook_mlp_out(self.mlp(self.hook_resid_mid(x)))
+      x = (x + mlp) if self.model[0].resid_mlp else mlp
     return self.hook_resid_post(x)
 
 
@@ -208,12 +215,21 @@ class Transformer(nn.Module):
          act_type,
          attn_only=False,
          d_vocab_out=None,
-         use_pos=True):
+         use_pos=True,
+         output_proj=True,
+         mlp_bias=True,
+         resid_attn=True,
+         resid_mlp=True,
+        ):
     super().__init__()
     self.cache = {}
     self.attn_only = attn_only
 
     self.embed = Embed(d_vocab, d_model)
+    self.output_proj = output_proj
+    self.mlp_bias = mlp_bias
+    self.resid_attn = resid_attn
+    self.resid_mlp = resid_mlp
     self.use_pos = use_pos
     if self.use_pos:
       self.pos_embed = PosEmbed(n_ctx, d_model)
