@@ -58,29 +58,37 @@ def load_epoch(d, epoch=None):
 MODELS = []
 for d in os.listdir(DATA_DIR):
   saved_data = load_epoch(d)
+  assert 'output_proj' not in saved_data or saved_data['output_proj'] == ('blocks.0.attn.W_O' in saved_data['model'])
+  assert 'mlp_bias' not in saved_data or saved_data['mlp_bias'] == ('blocks.0.mlp.b_in' in saved_data['model'])
+  assert ('blocks.0.mlp.b_in' in saved_data['model']) == ('blocks.0.mlp.b_out' in saved_data['model'])
   MODELS.append({'dir': d,
             'epoch': saved_data['epoch'],
             'd_model': saved_data['d_model'],
             'd_mlp': saved_data['d_mlp'],
+            'mlp_bias': 'blocks.0.mlp.b_out' in saved_data['model'],
+            'output_proj': 'blocks.0.attn.W_O' in saved_data['model'],
+            'resid_mlp': saved_data.get('resid_mlp', True),
+            'resid_attn': saved_data.get('resid_attn', True),
             'loss': saved_data['train_loss'][-1],
             'accuracy': saved_data['accuracy'][-1],
           })
 MODELS = pd.DataFrame(MODELS)
 
 
-def load(*, path=None, epoch=None, d_model=None, d_mlp=None):
+def load(*, path=None, epoch=None, d_model=None, d_mlp=None, mlp_bias=True, output_proj=True, resid_mlp=True, resid_attn=True):
   if path is not None:
     return load_data(path)
   else:
     assert d_model is not None and d_mlp is not None
-    ds = MODELS.loc[(MODELS['d_model'] == d_model) & (MODELS['d_mlp'] == d_mlp)].sort_values('epoch')
+    models = MODELS.set_index(['d_model', 'd_mlp', 'mlp_bias', 'output_proj', 'resid_mlp', 'resid_attn']).sort_index()
+    ds = models.loc[(d_model, d_mlp, mlp_bias, output_proj, resid_mlp, resid_attn)].sort_values('epoch')
     d = ds.iloc[-1]['dir']
     return load_epoch(d, epoch=epoch)
 
 
 
-def load_model(*, path=None, epoch=None, d_model=None, d_mlp=None):
-  saved_data = load(path=path, epoch=epoch, d_model=d_model, d_mlp=d_mlp)
+def load_model(*, path=None, epoch=None, d_model=None, d_mlp=None, mlp_bias=True, output_proj=True, resid_mlp=True, resid_attn=True):
+  saved_data = load(path=path, epoch=epoch, d_model=d_model, d_mlp=d_mlp, mlp_bias=mlp_bias, output_proj=output_proj, resid_mlp=resid_mlp, resid_attn=resid_attn)
   d_model = saved_data['d_model']
   d_mlp = saved_data['d_mlp']
   model = create_model(d_model=d_model, d_mlp=d_mlp)
