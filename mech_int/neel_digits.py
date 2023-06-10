@@ -6,10 +6,12 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
+import pandas as pd
 from tqdm.auto import tqdm
 
 import plotly.express as px
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 
 from .neel_transformer import Transformer
 
@@ -58,35 +60,50 @@ def show(fig):
   except ImportError:
     fig.show()
 
-def line(x, y=None, hover=None, xaxis='', yaxis='', **kwargs):
+def line(x, y=None, hover=None, xaxis='', yaxis='', plotly=False, title=None, **kwargs):
   if type(y)==torch.Tensor:
     y = to_numpy(y, flat=True)
   if type(x)==torch.Tensor:
     x=to_numpy(x, flat=True)
-  fig = px.line(x, y=y, hover_name=hover, **kwargs)
-  fig.update_layout(xaxis_title=xaxis, yaxis_title=yaxis)
-  show(fig)
+  if plotly:
+    fig = px.line(x, y=y, hover_name=hover, title=title, **kwargs)
+    fig.update_layout(xaxis_title=xaxis, yaxis_title=yaxis)
+    show(fig)
+  else:
+    if y is None:
+        y = x
+        x = np.arange(len(y))
+    plt.plot(x, y, **kwargs)
+    plt.title(title)
+    plt.xlabel(xaxis)
+    plt.ylabel(xaxis)
 
-def lines(lines_list, x=None, mode='lines', labels=None, xaxis='', yaxis='', title = '', log_y=False, hover=None, **kwargs):
+def lines(lines_list, x=None, mode='lines', labels=None, xaxis='', yaxis='', title = '', log_y=False, hover=None, plotly=False, **kwargs):
   # Helper function to plot multiple lines
   if type(lines_list)==torch.Tensor:
     lines_list = [lines_list[i] for i in range(lines_list.shape[0])]
   if x is None:
     x=np.arange(len(lines_list[0]))
-  fig = go.Figure(layout={'title':title})
-  fig.update_xaxes(title=xaxis)
-  fig.update_yaxes(title=yaxis)
-  for c, line in enumerate(lines_list):
-    if type(line)==torch.Tensor:
-      line = to_numpy(line)
-    if labels is not None:
-      label = labels[c]
-    else:
-      label = c
-    fig.add_trace(go.Scatter(x=x, y=line, mode=mode, name=label, hovertext=hover, **kwargs))
-  if log_y:
-    fig.update_layout(yaxis_type="log")
-  show(fig)
+  if plotly:
+    fig = go.Figure(layout={'title':title})
+    fig.update_xaxes(title=xaxis)
+    fig.update_yaxes(title=yaxis)
+    for c, line in enumerate(lines_list):
+      if type(line)==torch.Tensor:
+        line = to_numpy(line)
+      if labels is not None:
+        label = labels[c]
+      else:
+        label = c
+      fig.add_trace(go.Scatter(x=x, y=line, mode=mode, name=label, hovertext=hover, **kwargs))
+    if log_y:
+      fig.update_layout(yaxis_type="log")
+    show(fig)
+  else:
+    ax = pd.DataFrame({labels[c] if labels else c: to_numpy(line) for c, line in enumerate(lines_list)}, index=x).plot(title=title, logy=log_y, **kwargs)
+    ax.set_xlabel(xaxis)
+    ax.set_ylabel(xaxis)
+
 
 
 def data_generator(batch_size, num_digits=NUM_DIGITS):
@@ -138,7 +155,7 @@ def get_pred_log_probs(logits, tokens):
 
 
 def train(*, d_model:int=512, d_mlp:int|None=None, num_epochs:int=3_000, d_head:int|None=None, num_heads:int=4, is_finite:bool=False, seed:int=129000, checkpoint_models:bool=True, checkpoint_every:int=50, plot=True):
-  global model, optimizer, scheduler, test_ds, train_ds, ds, train_losses, train_carries, per_token_losses, tokens, logits, train_logits, train_tokens, epoch, per_token_losses_train, train_losses, test_tokens, test_logits, per_token_losses_test, test_losses, ptl_train_list, ptl_test_list, epochs, state_dicts
+  global model, optimizer, scheduler, test_ds, train_ds, ds, train_losses, train_carries, per_token_losses, tokens, logits, train_logits, train_tokens, epoch, per_token_losses_train, train_losses, test_tokens, test_logits, per_token_losses_test, test_losses, ptl_train_list, ptl_test_list, epochs, state_dicts, per_token_losses_list
 
   if d_mlp is None:
     d_mlp = 4 * d_model
