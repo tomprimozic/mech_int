@@ -91,7 +91,7 @@ def load_model(*, path=None, epoch=None, d_model=None, d_mlp=None, mlp_bias=True
   saved_data = load(path=path, epoch=epoch, d_model=d_model, d_mlp=d_mlp, mlp_bias=mlp_bias, output_proj=output_proj, resid_mlp=resid_mlp, resid_attn=resid_attn)
   d_model = saved_data['d_model']
   d_mlp = saved_data['d_mlp']
-  model = create_model(d_model=d_model, d_mlp=d_mlp)
+  model = create_model(d_model=d_model, d_mlp=d_mlp, mlp_bias=mlp_bias, output_proj=output_proj, resid_mlp=resid_mlp, resid_attn=resid_attn )
   model.load_state_dict(state_dict=saved_data['model'])
   return model.to(DEVICE)
 

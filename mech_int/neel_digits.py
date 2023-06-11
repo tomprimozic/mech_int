@@ -132,7 +132,7 @@ def create_model(*, d_model: int, d_mlp: int, d_head: int | None = None, num_hea
   if d_head is None:
     d_head = d_model//num_heads
   assert d_model == d_head * num_heads
-  print(f'creating new model {d_model=} {d_mlp=} {d_head=} {num_layers=} {num_heads=}')
+  print(f'creating new model {d_model=} {d_mlp=} {d_head=} {num_layers=} {num_heads=} {output_proj=} {mlp_bias=} {resid_attn=} {resid_mlp=}')
   model = Transformer(num_layers=num_layers,
             d_vocab=d_vocab,
             d_model=d_model,
