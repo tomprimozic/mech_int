@@ -162,13 +162,15 @@ def show_tokens(tokens: th.Tensor):
     else:
       is_carry[4-i] = 0
     carry = 1 if a + b + carry > 9 else 0
+  def under(i):
+    return {0: '', 1: '\u0332', 2: '\u0333'}[is_carry[i]]
   return ''.join(
-      [str(tokens[i].item()) + '\u0332' * is_carry[i] for i in range(5)]
+      [str(tokens[i].item()) + under(i) for i in range(5)]
     + [' + ']
-    + [str(tokens[6+i].item()) + '\u0332' * is_carry[i] for i in range(5)]
+    + [str(tokens[6+i].item()) + under(i) for i in range(5)]
     + [' = ']
     + [str(tokens[12].item())]
-    + [str(tokens[13+i].item()) + '\u0332' * is_carry[i] for i in range(5)]
+    + [str(tokens[13+i].item()) + under(i) for i in range(5)]
   )
 
 
